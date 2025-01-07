@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <!-- 1. 게임 이름 수정 -->
+    <title>몫이 큰 수</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f0f8ff;
+            text-align: center;
+            margin: 0;
+            padding: 0;
+        }
+        #start-screen, #game-screen, #end-screen {
+            display: none;
+        }
+        #start-screen.visible, #game-screen.visible, #end-screen.visible {
+            display: block;
+        }
+        h1 {
+            color: #ff4500;
+        }
+        .button {
+            padding: 15px 25px;
+            font-size: 16px;
+            margin: 10px;
+            cursor: pointer;
+        }
+        #energy-bar {
+            width: 100%;
+            height: 30px;
+            background-color: #ddd;
+            margin-top: 20px;
+            position: relative;
+        }
+        #energy {
+            height: 100%;
+            background-color: #76c7c0;
+            width: 100%;
+            transition: width 0.2s linear;
+        }
+        #choices button {
+            padding: 10px 20px;
+            font-size: 24px;
+            margin: 10px;
+            cursor: pointer;
+            display: inline-block;
+            vertical-align: middle;
+        }
+        #stats {
+            margin-top: 20px;
+            font-size: 18px;
+        }
+        #message {
+            font-size: 20px;
+            color: red;
+            margin-top: 20px;
+            min-height: 40px;
+        }
+        /* 전송 결과 표시 영역 스타일 */
+        #response {
+            margin-top: 20px;
+            color: green;
+        }
+    </style>
+</head>
+<body>
+
+<!-- 2. 첫 화면(시작화면)에 이름 입력 필드를 추가 -->
+<div id="start-screen" class="visible">
+    <h1>몫이 큰 수</h1>
+    <h2>난이도를 선택하세요</h2>
+    <input type="text" id="playerName" placeholder="이름을 입력하세요" style="padding: 10px; font-size: 16px;"><br>
+    <button class="button" onclick="startGame('highest')">최상</button>
+    <button class="button" onclick="startGame('high')">상</button>
+    <button class="button" onclick="startGame('medium')">중</button>
+    <button class="button" onclick="startGame('low')">하</button>
+</div>
+
+<!-- 게임 진행 화면 -->
+<div id="game-screen">
+    <!-- 6. 원본 문제 절대 생략 금지: 원본 제목 및 요소 유지 (텍스트만 "몫이 큰 수"로 표시) -->
+    <h1>몫이 큰 수</h1>
+    <div id="energy-bar">
+        <div id="energy"></div>
+    </div>
+    <div id="question"></div>
+    <div id="choices"></div>
+    <div id="message"></div>
+    <div id="stats">
+        <p>점수: <span id="score">0</span></p>
+        <p>남은 기회: <span id="lives">3</span></p>
+        <p>총 게임 시간: <span id="game-time">0</span>초</p>
+    </div>
+</div>
+
+<!-- 게임 종료 화면 -->
+<div id="end-screen">
+    <h1>게임 종료!</h1>
+    <p>최종 점수: <span id="final-score"></span></p>
+    <p>총 게임 시간: <span id="final-time"></span>초</p>
+    <button class="button" onclick="restartGame()">다시 시작</button>
+    <!-- 4. 점수 전송 버튼 추가 -->
+    <button class="button" onclick="sendScore()">점수전송</button>
+    <!-- 5. 전송 성공/실패 결과 표시 영역 -->
+    <div id="response"></div>
+</div>
+
+<script>
+    // 3. 서버에 점수를 전송하는 함수 추가 (원본 문제 절대 생략 금지)
+    function saveData(game, name, score, elapsedTime) {
+        const FUNCTION_URL = "https://us-central1-record-f420d.cloudfunctions.net/report";
+
+        const requestData = {
+            game,
+            name,
+            score: parseInt(score, 10),
+            elapsedTime: parseInt(elapsedTime, 10)
+        };
+
+        // fetch 호출 시 async/await가 아닌 Promise 사용
+        fetch(FUNCTION_URL, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(requestData)
+        })
+        .then(async response => {
+            const responseData = await response.json();
+            if (response.ok) {
+                document.getElementById('response').innerText =
+                    `성공: ${JSON.stringify(responseData, null, 2)}`;
+            } else {
+                document.getElementById('response').innerText =
+                    `오류: ${JSON.stringify(responseData, null, 2)}`;
+            }
+        })
+        .catch(error => {
+            console.error('요청 실패:', error);
+            document.getElementById('response').innerText =
+                `네트워크 오류: ${error.message}`;
+        });
+    }
+
+    // 기존 게임 코드
+    window.onload = function() {
+        let difficultySettings = {
+            'highest': { time: 20, points: 20 },
+            'high': { time: 30, points: 15 },
+            'medium': { time: 40, points: 13 },
+            'low': { time: Infinity, points: 10 }
+        };
+        let difficulty;
+        let timeLimit;
+        let timeRemaining;
+        let score = 0;
+        let lives = 3;
+        let totalGameTime = 0;
+        let gameInterval;
+        let energyInterval;
+        let gameStartTime;
+        let timeReduction = 0.99;
+        let correctAnswer;
+
+        window.startGame = function(selectedDifficulty) {
+            difficulty = selectedDifficulty;
+            timeLimit = difficultySettings[difficulty].time;
+            document.getElementById('start-screen').classList.remove('visible');
+            document.getElementById('game-screen').classList.add('visible');
+            gameStartTime = Date.now();
+            generateQuestion();
+            updateStats();
+            if (difficulty !== 'low') {
+                startEnergyBar();
+            }
+            gameInterval = setInterval(() => {
+                totalGameTime = Math.floor((Date.now() - gameStartTime) / 1000);
+                document.getElementById('game-time').innerText = totalGameTime;
+            }, 1000);
+        }
+
+        function generateQuestion() {
+            document.getElementById('message').innerHTML = '';
+            let problem = generateProblem();
+            let expr1 = problem.expr1;
+            let expr2 = problem.expr2;
+            correctAnswer = problem.correctAnswer;
+
+            document.getElementById('question').innerHTML = '몫이 큰 수를 고르세요:';
+            let choicesDiv = document.getElementById('choices');
+            choicesDiv.innerHTML = '';
+
+            let choices = [expr1, expr2];
+            choices.sort(() => Math.random() - 0.5);
+
+            choices.forEach(choice => {
+                let btn = document.createElement('button');
+                btn.innerHTML = choice;
+                btn.onclick = () => checkAnswer(choice);
+                choicesDiv.appendChild(btn);
+            });
+
+            if (difficulty !== 'low') {
+                timeRemaining = timeLimit;
+                startEnergyBar();
+            }
+        }
+
+        function generateProblem() {
+            let num1, num2, den1, den2;
+            let quotient1, quotient2;
+
+            do {
+                num1 = Math.floor(Math.random() * 90) + 10; // 10부터 99까지
+                den1 = Math.floor(Math.random() * 9) + 1;   // 1부터 9까지
+                quotient1 = num1 / den1;
+            } while (!Number.isInteger(quotient1) || quotient1 >= 10);
+
+            do {
+                num2 = Math.floor(Math.random() * 90) + 10;
+                den2 = Math.floor(Math.random() * 9) + 1;
+                quotient2 = num2 / den2;
+            } while (!Number.isInteger(quotient2) || quotient2 >= 10 || quotient1 === quotient2);
+
+            let expr1 = num1 + '÷' + den1;
+            let expr2 = num2 + '÷' + den2;
+            let correctAnswer = quotient1 > quotient2 ? expr1 : expr2;
+
+            return { expr1: expr1, expr2: expr2, correctAnswer: correctAnswer };
+        }
+
+        function checkAnswer(selected) {
+            if (selected === correctAnswer) {
+                score += difficultySettings[difficulty].points;
+                updateStats();
+                if (difficulty !== 'low') {
+                    timeLimit *= timeReduction;
+                }
+                generateQuestion();
+            } else {
+                lives--;
+                updateStats();
+                let answerExpr = correctAnswer;
+                let num = parseInt(correctAnswer.split('÷')[0]);
+                let den = parseInt(correctAnswer.split('÷')[1]);
+                let quotient = num / den;
+                document.getElementById('message').innerHTML =
+                    '틀렸습니다! 정답은 ' + correctAnswer + ' = ' + quotient + ' 입니다.';
+                if (lives <= 0) {
+                    endGame();
+                } else {
+                    if (difficulty !== 'low') {
+                        timeLimit *= timeReduction;
+                    }
+                    setTimeout(generateQuestion, 2000);
+                }
+            }
+        }
+
+        function startEnergyBar() {
+            clearInterval(energyInterval);
+            let energyBar = document.getElementById('energy');
+            let width = 100;
+            let decrement = 100 / (timeLimit * 10);
+            energyBar.style.width = '100%'; // 에너지바 초기화
+            energyInterval = setInterval(() => {
+                width -= decrement;
+                if (width <= 0) {
+                    clearInterval(energyInterval);
+                    lives--;
+                    updateStats();
+                    let answerExpr = correctAnswer;
+                    let num = parseInt(answerExpr.split('÷')[0]);
+                    let den = parseInt(answerExpr.split('÷')[1]);
+                    let quotient = num / den;
+                    document.getElementById('message').innerHTML =
+                        '시간 초과! 정답은 ' + correctAnswer + ' = ' + quotient + ' 입니다.';
+                    if (lives <= 0) {
+                        endGame();
+                    } else {
+                        if (difficulty !== 'low') {
+                            timeLimit *= timeReduction;
+                        }
+                        setTimeout(generateQuestion, 2000);
+                    }
+                } else {
+                    energyBar.style.width = width + '%';
+                }
+            }, 100);
+        }
+
+        function updateStats() {
+            document.getElementById('score').innerText = score;
+            document.getElementById('lives').innerText = lives;
+        }
+
+        function endGame() {
+            clearInterval(gameInterval);
+            clearInterval(energyInterval);
+            document.getElementById('game-screen').classList.remove('visible');
+            document.getElementById('end-screen').classList.add('visible');
+            document.getElementById('final-score').innerText = score;
+            document.getElementById('final-time').innerText = totalGameTime;
+        }
+
+        window.restartGame = function() {
+            score = 0;
+            lives = 3;
+            totalGameTime = 0;
+            document.getElementById('end-screen').classList.remove('visible');
+            document.getElementById('message').innerHTML = '';
+            document.getElementById('start-screen').classList.add('visible');
+        }
+
+        // 4,5. "점수전송" 버튼에서 호출할 함수
+        window.sendScore = function() {
+            const playerName = document.getElementById('playerName').value || 'Unknown';
+            saveData("몫이 큰 수", playerName, score, totalGameTime);
+        }
+    };
+</script>
+
+</body>
+</html>
